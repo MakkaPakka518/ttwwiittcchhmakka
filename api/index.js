@@ -6,67 +6,48 @@ export default async function handler(request) {
   const url = new URL(request.url);
   const params = url.searchParams;
   
-  // 获取频道参数
   let channel = params.get('channel');
   const format = params.get('format') || 'm3u'; 
 
-  // --- 1. 参数清洗与容错 ---
-  if (!channel) return new Response("Error: Missing channel param", { status: 400 });
+  if (!channel) return new Response("Error: No channel", { status: 400 });
 
-  // 忽略浏览器自动请求的图标
-  if (channel.includes('favicon')) return new Response(null, { status: 404 });
-
-  // 如果频道名里意外包含了后缀（路由匹配偏差时），手动去掉
+  // 清洗参数
   channel = channel.replace('.txt', '').replace('.m3u', '').replace('/', '');
-
-  // 兼容完整 URL (如 twitch.tv/shroud)
   if (channel.includes('twitch.tv/')) {
     channel = channel.split('twitch.tv/')[1].split('/')[0];
   }
 
   try {
-    // --- 2. 请求 Twitch API 获取 Token ---
+    // 1. 获取 Token (使用 Switch 伪装)
     const tokenData = await getTwitchAccessToken(channel);
 
-    // --- 3. 结果处理 ---
-    
-    // 情况 A: 没拿到 Token (通常是主播不在线，或者被封禁)
+    // 2. 失败处理
     if (!tokenData) {
-      const msg = `[OFFLINE] Channel '${channel}' is currently not live or does not exist.`;
+      // 可以在 Vercel Logs 里看到这行字，说明 IP 被墙或者 ID 没过
+      console.error(`[FAIL] Could not get token for ${channel}`);
       
-      // 如果请求的是 txt 格式，返回 200 状态码和提示文字，方便浏览器查看
+      const msg = `[OFFLINE/BLOCKED] Could not fetch data for '${channel}'. Try again later.`;
       if (format === 'txt') {
-        return new Response(msg, { status: 200, headers: { 'Content-Type': 'text/plain' } });
+         return new Response(msg, { status: 200 });
       }
-      // 如果是 m3u 格式，返回 404 告诉播放器无法播放
       return new Response(msg, { status: 404 });
     }
 
-    // 情况 B: 拿到 Token (主播在线) -> 拼接真实播放地址
+    // 3. 成功，拼接链接
     const randomInt = Math.floor(Math.random() * 1000000);
-    const m3u8Url = `https://usher.ttvnw.net/api/channel/hls/${channel}.m3u8?client_id=kimne78a6xlas1qlcj9435f1q4F&token=${tokenData.value}&sig=${tokenData.signature}&allow_source=true&allow_audio_only=true&p=${randomInt}`;
+    const m3u8Url = `https://usher.ttvnw.net/api/channel/hls/${channel}.m3u8?client_id=jzkbprff40iqj646a697cyrvl0zt2m6&token=${tokenData.value}&sig=${tokenData.signature}&allow_source=true&allow_audio_only=true&p=${randomInt}`;
 
-    // --- 4. 返回最终数据 ---
+    // 4. 返回
     if (format === 'txt') {
-      // txt 格式：直接返回链接字符串
       return new Response(m3u8Url, { 
         status: 200, 
-        headers: { 
-          'Content-Type': 'text/plain',
-          'Access-Control-Allow-Origin': '*',
-          'Cache-Control': 'no-cache'
-        } 
+        headers: { 'Content-Type': 'text/plain', 'Cache-Control': 'no-cache' } 
       });
     } else {
-      // m3u 格式：返回标准 IPTV 列表
       const m3uContent = `#EXTM3U\n#EXTINF:-1 tvg-id="${channel}" tvg-name="${channel}" tvg-logo="https://static-cdn.jtvnw.net/ttv-boxart/${channel}-285x380.jpg" group-title="Twitch",${channel}\n${m3u8Url}`;
       return new Response(m3uContent, { 
         status: 200, 
-        headers: { 
-          'Content-Type': 'application/x-mpegurl',
-          'Access-Control-Allow-Origin': '*',
-          'Cache-Control': 'no-cache'
-        } 
+        headers: { 'Content-Type': 'application/x-mpegurl', 'Cache-Control': 'no-cache' } 
       });
     }
 
@@ -75,14 +56,14 @@ export default async function handler(request) {
   }
 }
 
-// 辅助函数：获取 AccessToken (纯文本 Query 版)
+// 核心修改：伪装成 Nintendo Switch 客户端
 async function getTwitchAccessToken(channel) {
-  const CLIENT_ID = 'kimne78a6xlas1qlcj9435f1q4F'; 
+  // Nintendo Switch 的 Client ID (这个 ID 权限很高，不容易被墙)
+  const CLIENT_ID = 'jzkbprff40iqj646a697cyrvl0zt2m6'; 
   
-  // GraphQL 查询语句
   const queryStr = `
     query PlaybackAccessToken( $login: String!, $isLive: Boolean!, $vodID: ID!, $isVod: Boolean!, $playerType: String! ) {
-      streamPlaybackAccessToken(channelName: $login, params: {platform: "web", playerBackend: "mediaplayer", playerType: $playerType}) {
+      streamPlaybackAccessToken(channelName: $login, params: {platform: "switch", playerBackend: "mediaplayer", playerType: $playerType}) {
         value
         signature
       }
@@ -96,7 +77,7 @@ async function getTwitchAccessToken(channel) {
       login: channel,
       isVod: false,
       vodID: "",
-      playerType: "site"
+      playerType: "embed" // switch 通常配合 embed 或 site 使用
     },
     query: queryStr
   };
@@ -106,17 +87,20 @@ async function getTwitchAccessToken(channel) {
     headers: {
       'Client-ID': CLIENT_ID,
       'Content-Type': 'application/json',
-      // 模拟 Chrome 浏览器，降低被屏蔽风险
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36',
-      'Referer': 'https://www.twitch.tv/',
-      'Origin': 'https://www.twitch.tv'
+      // 关键伪装：假装自己是 Dalvik (安卓底层)，这是 Switch 系统的一部分特征
+      'User-Agent': 'Dalvik/2.1.0 (Linux; U; Android 9; Nintendo Switch Build/NF1)',
+      'Referer': 'https://www.twitch.tv/', 
     },
     body: JSON.stringify(body)
   });
 
   const data = await response.json();
   
-  // 如果 API 返回数据结构正确，提取 token
+  // 打印详细错误到 Vercel 日志 (用于排查)
+  if (data.errors) {
+    console.log("Twitch API Refused:", JSON.stringify(data.errors));
+  }
+
   if (data.data && data.data.streamPlaybackAccessToken) {
     return data.data.streamPlaybackAccessToken;
   }
