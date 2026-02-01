@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    { "source": "/favicon.ico", "destination": "/404" },
+    { "source": "/:channel.m3u", "destination": "/api/index?channel=:channel&format=m3u" },
+    { "source": "/:channel.txt", "destination": "/api/index?channel=:channel&format=txt" },
+    { "source": "/:channel", "destination": "/api/index?channel=:channel" }
+  ]
+}
