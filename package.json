@@ -1,0 +1,10 @@
+{
+  "name": "twitch-to-m3u",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "node api/index.js"
+  },
+  "dependencies": {
+    "node-fetch": "^3.3.0"
+  }
+}
